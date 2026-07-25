@@ -40,7 +40,7 @@ OUTPUT_DIR = "/mnt/artifacts"
 # Path to the real sales data file inside a mounted Domino Dataset.
 # Domino Datasets are mounted read-only at /domino/datasets/<data-plane>/<DatasetName>/...
 # Update this to match your project's actual Dataset name and file.
-DATASET_PATH = "/domino/datasets/local/Sales_Report_Generator/sales.csv"
+DATASET_PATH = "/mnt/data/Sales_Report_Generator/sales.csv"
 
 # Expected columns in the CSV: date, region, revenue
 # - date:    parseable date string (e.g. YYYY-MM-DD)
