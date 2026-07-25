@@ -15,6 +15,7 @@ Output:
     the launcher, and also shows it in the Job results view.
 """
 
+import os
 import re
 import sys
 import pandas as pd
@@ -22,6 +23,9 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # no display needed on a Domino executor
 import matplotlib.pyplot as plt
+
+# Domino only auto-saves job outputs written to /mnt/artifacts.
+OUTPUT_DIR = "/mnt/artifacts"
 
 
 def parse_domino_date(value):
@@ -84,7 +88,9 @@ def main():
     plt.xlabel("Date")
     plt.ylabel("Revenue ($)")
     plt.tight_layout()
-    plt.savefig("revenue_chart.png")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    chart_path = os.path.join(OUTPUT_DIR, "revenue_chart.png")
+    plt.savefig(chart_path)
 
     # Build the HTML email/report body
     html = f"""
@@ -102,10 +108,11 @@ def main():
     </html>
     """
 
-    with open("email.html", "w") as f:
+    email_path = os.path.join(OUTPUT_DIR, "email.html")
+    with open(email_path, "w") as f:
         f.write(html)
 
-    print("Report generated: email.html + revenue_chart.png")
+    print(f"Report generated: {email_path} + {chart_path}")
 
 
 if __name__ == "__main__":
