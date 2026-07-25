@@ -12,6 +12,11 @@ Arguments (in order):
 Output:
     Writes report.pdf (and revenue_chart.png) to /mnt/artifacts, so Domino
     automatically surfaces them as downloadable files on the Job's Results tab.
+
+Data source:
+    Reads sales data from a Domino Dataset CSV at DATASET_PATH (see below).
+    If that file isn't found, falls back to fabricated sample data so the
+    launcher stays demoable before the real Dataset is wired up.
 """
 
 import os
@@ -32,6 +37,16 @@ from reportlab.lib import colors
 # Domino only auto-saves job outputs written to /mnt/artifacts.
 OUTPUT_DIR = "/mnt/artifacts"
 
+# Path to the real sales data file inside a mounted Domino Dataset.
+# Domino Datasets are mounted read-only at /domino/datasets/<data-plane>/<DatasetName>/...
+# Update this to match your project's actual Dataset name and file.
+DATASET_PATH = "/domino/datasets/local/Sales_Report_Generator/sales.csv"
+
+# Expected columns in the CSV: date, region, revenue
+# - date:    parseable date string (e.g. YYYY-MM-DD)
+# - region:  one of North / South / East / West (or whatever your Select options are)
+# - revenue: numeric
+
 
 def parse_domino_date(value):
     """
@@ -49,8 +64,35 @@ def parse_domino_date(value):
     return ts
 
 
+def load_sales_data():
+    """
+    Load real sales data from a Domino Dataset CSV file.
+
+    Falls back to fabricated sample data (with a warning) if the Dataset
+    file isn't found yet — this keeps the launcher demoable before the
+    real Dataset is wired up, and makes the missing-file case obvious in
+    the job logs rather than failing silently or crashing.
+    """
+    if os.path.exists(DATASET_PATH):
+        df = pd.read_csv(DATASET_PATH, parse_dates=["date"])
+        required_cols = {"date", "region", "revenue"}
+        missing = required_cols - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"Dataset at {DATASET_PATH} is missing required columns: {missing}"
+            )
+        return df
+
+    print(
+        f"WARNING: Dataset file not found at {DATASET_PATH}. "
+        "Falling back to fabricated sample data. Update DATASET_PATH "
+        "once the real Domino Dataset is mounted to this project."
+    )
+    return load_sample_sales_data()
+
+
 def load_sample_sales_data():
-    """Stand-in for a real data source (DB, warehouse, Domino Dataset, etc.)"""
+    """Fallback stand-in used only when the real Dataset file isn't available."""
     rng = np.random.default_rng(42)
     dates = pd.date_range("2025-01-01", "2026-07-01", freq="D")
     regions = ["North", "South", "East", "West"]
@@ -121,7 +163,7 @@ def main():
     start_date = parse_domino_date(start_date_raw)
     end_date = parse_domino_date(end_date_raw)
 
-    df = load_sample_sales_data()
+    df = load_sales_data()
     df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
     if region != "All":
         df = df[df["region"] == region]
