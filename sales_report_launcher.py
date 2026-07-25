@@ -2,17 +2,16 @@
 Sales Report Generator — designed to be run via a Domino Launcher.
 
 Domino launcher command should be configured as:
-    python sales_report_launcher.py ${start_date} ${end_date} ${region}
+    sales_report_launcher.py ${start_date} ${end_date} ${region}
 
 Arguments (in order):
-    1. start_date  -> Date input control (format: YYYY-MM-DD)
-    2. end_date    -> Date input control (format: YYYY-MM-DD)
+    1. start_date  -> Date input control
+    2. end_date    -> Date input control
     3. region      -> Select input control (e.g. North, South, East, West, All)
 
 Output:
-    Writes email.html in the working directory. Domino automatically uses
-    email.html as the body of the notification email sent to whoever ran
-    the launcher, and also shows it in the Job results view.
+    Writes report.pdf (and revenue_chart.png) to /mnt/artifacts, so Domino
+    automatically surfaces them as downloadable files on the Job's Results tab.
 """
 
 import os
@@ -23,6 +22,12 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # no display needed on a Domino executor
 import matplotlib.pyplot as plt
+
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib import colors
 
 # Domino only auto-saves job outputs written to /mnt/artifacts.
 OUTPUT_DIR = "/mnt/artifacts"
@@ -44,7 +49,6 @@ def parse_domino_date(value):
     return ts
 
 
-
 def load_sample_sales_data():
     """Stand-in for a real data source (DB, warehouse, Domino Dataset, etc.)"""
     rng = np.random.default_rng(42)
@@ -61,6 +65,53 @@ def load_sample_sales_data():
     return pd.DataFrame(rows)
 
 
+def build_pdf_report(pdf_path, chart_path, region, start_date_display,
+                      end_date_display, total_revenue, avg_daily, best_day, worst_day):
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(Paragraph("Sales Report", styles["Title"]))
+    story.append(Paragraph(f"Region: {region}", styles["Heading2"]))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(
+        f"Period: {start_date_display} to {end_date_display}", styles["Normal"]
+    ))
+    story.append(Spacer(1, 12))
+
+    summary_data = [
+        ["Metric", "Value"],
+        ["Total Revenue", f"${total_revenue:,.2f}"],
+        ["Average Daily Revenue", f"${avg_daily:,.2f}"],
+        ["Best Day", f"{best_day[0]} (${best_day[1]:,.2f})"],
+        ["Worst Day", f"{worst_day[0]} (${worst_day[1]:,.2f})"],
+    ]
+    table = Table(summary_data, colWidths=[2.5 * inch, 2.5 * inch])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4B4BE0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 20))
+
+    story.append(Paragraph("Daily Revenue Trend", styles["Heading2"]))
+    story.append(Spacer(1, 6))
+    story.append(Image(chart_path, width=6.5 * inch, height=3.25 * inch))
+    story.append(Spacer(1, 20))
+
+    story.append(Paragraph(
+        "Generated automatically by a Domino Launcher.", styles["Italic"]
+    ))
+
+    doc = SimpleDocTemplate(pdf_path, pagesize=letter,
+                             topMargin=0.75 * inch, bottomMargin=0.75 * inch)
+    doc.build(story)
+
+
 def main():
     if len(sys.argv) < 4:
         print("Usage: sales_report_launcher.py <start_date> <end_date> <region>")
@@ -75,13 +126,15 @@ def main():
     if region != "All":
         df = df[df["region"] == region]
 
-    total_revenue = df["revenue"].sum()
-    avg_daily = df.groupby("date")["revenue"].sum().mean()
+    daily = df.groupby("date")["revenue"].sum()
+    total_revenue = daily.sum()
+    avg_daily = daily.mean()
+    best_day = (daily.idxmax().strftime("%Y-%m-%d"), daily.max())
+    worst_day = (daily.idxmin().strftime("%Y-%m-%d"), daily.min())
     start_date_display = start_date.strftime("%Y-%m-%d")
     end_date_display = end_date.strftime("%Y-%m-%d")
 
     # Chart: daily revenue trend
-    daily = df.groupby("date")["revenue"].sum()
     plt.figure(figsize=(8, 4))
     daily.plot(kind="line")
     plt.title(f"Daily Revenue — {region} ({start_date_display} to {end_date_display})")
@@ -91,28 +144,15 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     chart_path = os.path.join(OUTPUT_DIR, "revenue_chart.png")
     plt.savefig(chart_path)
+    plt.close()
 
-    # Build the HTML email/report body
-    html = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif;">
-        <h2>Sales Report — {region}</h2>
-        <p><b>Period:</b> {start_date_display} to {end_date_display}</p>
-        <p><b>Total Revenue:</b> ${total_revenue:,.2f}</p>
-        <p><b>Average Daily Revenue:</b> ${avg_daily:,.2f}</p>
-        <img src="revenue_chart.png" width="600"/>
-        <p style="color:gray; font-size:12px;">
-            Generated automatically by a Domino Launcher.
-        </p>
-    </body>
-    </html>
-    """
+    pdf_path = os.path.join(OUTPUT_DIR, "report.pdf")
+    build_pdf_report(
+        pdf_path, chart_path, region, start_date_display, end_date_display,
+        total_revenue, avg_daily, best_day, worst_day,
+    )
 
-    email_path = os.path.join(OUTPUT_DIR, "email.html")
-    with open(email_path, "w") as f:
-        f.write(html)
-
-    print(f"Report generated: {email_path} + {chart_path}")
+    print(f"Report generated: {pdf_path} + {chart_path}")
 
 
 if __name__ == "__main__":
